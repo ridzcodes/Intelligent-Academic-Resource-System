@@ -12,6 +12,20 @@ export const resourceService = {
   },
 
   /**
+   * Execute AI-Powered Semantic Vector Search via SentenceTransformers & ChromaDB
+   * @param {string} query - Natural language search prompt
+   * @param {number} topK - Number of results to retrieve (default: 6)
+   */
+  async semanticSearch(query, topK = 6) {
+    const response = await api.post('/ai/semantic-search', {
+      query,
+      top_k: topK,
+    });
+    return response.data;
+  },
+
+
+  /**
    * Get single resource details by ID
    * @param {string} id - Resource ID
    */

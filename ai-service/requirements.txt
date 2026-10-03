@@ -1,17 +1,15 @@
-# Future Python AI Service Dependencies
-# (Will be installed in Phase 2 for Semantic Search & Recommendations)
-
+# FastAPI Core Web Framework & Multipart File Upload Support
 fastapi>=0.110.0
 uvicorn[standard]>=0.28.0
 pydantic>=2.6.0
 python-multipart>=0.0.9
 requests>=2.31.0
 
-# PDF Extraction & Document Processing
+# Module 1: PDF Extraction & Document Processing
 pypdf>=4.1.0
 pdfplumber>=0.10.4
 
-# Embeddings & Vector Search
+# Future Modules: Embeddings & Vector Search (Phase 2)
 sentence-transformers>=2.5.1
 chromadb>=0.4.24
 numpy>=1.26.4
@@ -19,3 +17,4 @@ torch>=2.2.0
 
 # Optional LLM / RAG integration
 langchain>=0.1.12
+

@@ -4,6 +4,7 @@ const router = express.Router();
 const authRoutes = require('./authRoutes');
 const resourceRoutes = require('./resourceRoutes');
 const userRoutes = require('./userRoutes');
+const aiRoutes = require('./aiRoutes');
 
 // API Health Check Endpoint
 router.get('/health', (req, res) => {
@@ -19,6 +20,8 @@ router.get('/health', (req, res) => {
 // Mount modular sub-routers
 router.use('/auth', authRoutes);
 router.use('/resources', resourceRoutes);
+router.use('/ai', aiRoutes);
 router.use('/admin', userRoutes);
 
 module.exports = router;
+

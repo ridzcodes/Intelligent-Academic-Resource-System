@@ -43,3 +43,6 @@ venv/
 ENV/
 .pytest_cache/
 .env.ai
+ai-service/chroma_db/
+chroma_db/
+*.sqlite3

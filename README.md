@@ -240,47 +240,61 @@ cd Intelligent-Academic-Resource-System
 | `PUT` | `/api/resources/:id` | Update resource metadata | Owner / Admin |
 | `DELETE` | `/api/resources/:id` | Delete resource and remove file from disk | Owner / Admin |
 
-### Administration (`/api/admin`)
+### AI Semantic Search (`/api/ai`)
 | Method | Endpoint | Description | Access |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/api/admin/stats` | Get overview analytics (Users, Resources, Downloads) | Admin Only |
-| `GET` | `/api/admin/resources` | Get all resources including pending and rejected | Admin Only |
-| `PATCH` | `/api/resources/:id/status` | Update resource status (`approved`, `rejected`, `pending`) | Admin Only |
-| `GET` | `/api/admin/users` | List all registered users | Admin Only |
-| `PATCH` | `/api/admin/users/:id/role` | Promote/demote user role (`student` ⇄ `admin`) | Admin Only |
-| `DELETE` | `/api/admin/users/:id` | Delete user account | Admin Only |
+| `POST` | `/api/ai/semantic-search` | Natural-language vector search via SentenceTransformers & ChromaDB | Public |
+| `GET` | `/api/ai/semantic-search` | Natural-language vector search query string format | Public |
+| `GET` | `/api/ai/health` | Check connectivity status of Python AI microservice | Public |
 
 ---
 
-## 9. Future AI Microservice Architecture (Phase 2 Roadmap)
+## 9. AI Semantic Search Architecture (Full-Stack Integration)
 
-In Phase 2, the system will be extended with the Python AI microservice located in `ai-service/`:
+The platform features an integrated neural semantic search engine connecting the React frontend, Express API, and Python FastAPI microservice:
 
 ```
-   [ Student Natural Query ]
-              │
-              ▼
-   [ FastAPI Microservice ] ───► [ Sentence-Transformers Embedding Model ]
-              │                                    │
-              ▼                                    ▼
-   [ ChromaDB / Vector Store ] ◄──── [ Dense 384-d Vector Representation ]
-              │
-              ▼
-   [ Cosine Similarity Match ] ───► [ Top Ranked Relevant Resource Chunks ]
++-----------------------------------------------------------------------------------------------+
+| 1. React Frontend (SearchPage.jsx)                                                            |
+|    - User types a natural-language conceptual query                                           |
+|    - Sends POST /api/ai/semantic-search { query: "...", top_k: 6 }                            |
++-----------------------------------------------------------------------------------------------+
+                                               │
+                                               ▼
++-----------------------------------------------------------------------------------------------+
+| 2. Node.js / Express API Backend (aiController.js & aiClient.js)                              |
+|    - Validates query and forwards to Python AI Microservice (port 8000)                       |
+|    - Enriches vector matches with MongoDB Resource metadata (title, uploader, fileUrl)        |
++-----------------------------------------------------------------------------------------------+
+                                               │
+                                               ▼
++-----------------------------------------------------------------------------------------------+
+| 3. Python FastAPI Microservice (main.py, embedding_service.py, vector_store.py)              |
+|    - Receives query and passes to SentenceTransformer (all-MiniLM-L6-v2)                      |
+|    - Computes 384-dimensional dense vector embedding                                          |
+|    - Executes Cosine Similarity search over ChromaDB HNSW vector index                        |
+|    - Returns top matching chunks with exact PDF page citations and similarity scores          |
++-----------------------------------------------------------------------------------------------+
+                                               │
+                                               ▼
++-----------------------------------------------------------------------------------------------+
+| 4. React Result Cards (SemanticResultCard.jsx)                                                |
+|    - Displays match confidence badge (e.g. 88% Match)                                         |
+|    - Highlights exact matching passage from the PDF                                           |
+|    - Displays exact page number citation (e.g. Page 2) and direct download/details link       |
++-----------------------------------------------------------------------------------------------+
 ```
-
-1. **PDF Text Extraction & Chunking:** `pypdf` / `pdfplumber` will extract raw text from uploaded PDFs and split it into semantic chunks preserving chapter context.
-2. **Dense Vector Embeddings:** Hugging Face `sentence-transformers/all-MiniLM-L6-v2` will convert chunks into 384-dimensional dense vectors.
-3. **Vector Similarity Indexing:** Embeddings stored in a vector database (ChromaDB / FAISS).
-4. **Semantic Search:** Students can search natural queries like *"How does virtual memory paging work?"* and retrieve the exact relevant lecture notes even if keywords do not match verbatim.
-5. **Personalized Recommendations:** Hybrid algorithm combining student department/semester history with peer affinity vectors.
 
 ---
 
 ## 10. Viva / Presentation Points
 
 When explaining this project in your college viva:
-- **Architecture Pattern:** Model-View-Controller (MVC) on backend, Component-based SPA on frontend.
-- **Security:** Passwords are never stored in plaintext; they are salted and hashed with `bcryptjs` (10 salt rounds). All protected actions require an authorization header (`Bearer <token>`).
-- **File Upload Security:** Multer inspects both MIME type (`application/pdf`) and file extension, saving sanitized unique filenames to prevent path traversal.
-- **Scalability:** Stateless JWT authentication enables simple horizontal scaling without server-side session locks.
+- **Dual Search Architecture:**
+  - *Keyword Search:* B-Tree and text indexes in MongoDB for exact course code and title lookups.
+  - *Semantic Search:* 384-D dense vector space in ChromaDB for conceptual question matching without exact keyword overlap.
+- **Architecture Pattern:** Three-tier architecture (React SPA $\leftrightarrow$ Node.js/Express API $\leftrightarrow$ Python AI FastAPI Microservice + MongoDB + ChromaDB).
+- **Security:** Passwords salted and hashed with `bcryptjs` (10 rounds). Stateless authentication via JWT tokens.
+- **PDF Extraction & Page Preservation:** PyPDF parses documents page-by-page so search results can cite the exact page number to the student.
+- **Graceful Degradation:** If the Python AI service is temporarily offline, Express handles the failure gracefully with informative status codes, allowing students to seamlessly switch to Keyword Search.
+
