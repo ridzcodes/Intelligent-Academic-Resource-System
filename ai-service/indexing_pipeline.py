@@ -92,7 +92,10 @@ def index_pdf_document(
 
     # -----------------------------------------------------------------------
     # Step 4: Persist Vectors & Structured Metadata in ChromaDB
+    # (Purge any prior vectors for this resource to avoid duplicates)
     # -----------------------------------------------------------------------
+    vector_store.delete_by_resource_id(resource_id)
+
     vectors_added = vector_store.add_chunks(
         chunks=chunks,
         embeddings=embeddings,

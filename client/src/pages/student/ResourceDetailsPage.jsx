@@ -12,6 +12,7 @@ import {
   FileText,
   CheckCircle,
   ExternalLink,
+  Sparkles,
 } from 'lucide-react';
 import { resourceService } from '../../services/resourceService';
 import { formatDate, formatBytes } from '../../utils/formatters';
@@ -35,15 +36,34 @@ const ResourceDetailsPage = () => {
         if (data.success && data.resource) {
           setResource(data.resource);
 
-          // Fetch related resources for the same department/subject
-          const related = await resourceService.getResources({
-            department: data.resource.department,
-            limit: 3,
-          });
-          if (related.success) {
-            setRelatedResources(
-              (related.resources || []).filter((r) => r._id !== id)
-            );
+          // Fetch AI content-based recommendations for this resource
+          try {
+            const recData = await resourceService.getRecommendations(id, { topK: 3 });
+            if (recData.success && recData.recommendations && recData.recommendations.length > 0) {
+              setRelatedResources(recData.recommendations);
+            } else {
+              // Fallback: Department resources
+              const related = await resourceService.getResources({
+                department: data.resource.department,
+                limit: 3,
+              });
+              if (related.success) {
+                setRelatedResources(
+                  (related.resources || []).filter((r) => r._id !== id)
+                );
+              }
+            }
+          } catch (recErr) {
+            // Fallback to department resources if AI service is offline
+            const related = await resourceService.getResources({
+              department: data.resource.department,
+              limit: 3,
+            });
+            if (related.success) {
+              setRelatedResources(
+                (related.resources || []).filter((r) => r._id !== id)
+              );
+            }
           }
         }
       } catch (err) {
@@ -226,28 +246,67 @@ const ResourceDetailsPage = () => {
         </div>
       )}
 
-      {/* Related Department Study Materials */}
+      {/* Related Academic Study Materials & Recommendations */}
       {relatedResources.length > 0 && (
         <div className="space-y-4 pt-6">
-          <h2 className="text-lg font-bold text-slate-900">
-            Related {resource.department} Materials
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+              <Sparkles className="w-5 h-5 text-purple-600" />
+              <span>Semantically Related Materials & Recommendations</span>
+            </h2>
+            <span className="text-xs font-semibold text-purple-700 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-200">
+              AI Content Match
+            </span>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {relatedResources.map((rel) => (
-              <div
-                key={rel._id}
-                className="p-4 bg-white rounded-2xl border border-slate-200 hover:border-brand-300 transition"
-              >
-                <Badge type={rel.resourceType}>{rel.resourceType}</Badge>
-                <Link
-                  to={`/resources/${rel._id}`}
-                  className="block font-bold text-sm text-slate-900 hover:text-brand-600 mt-2 mb-1"
+            {relatedResources.map((rel) => {
+              const relId = rel._id || rel.resourceId;
+              const simPercent = rel.similarityScore ? Math.round(rel.similarityScore * 100) : null;
+              return (
+                <div
+                  key={relId}
+                  className="p-4 bg-white rounded-2xl border border-slate-200 hover:border-purple-300 hover:shadow-md transition flex flex-col justify-between"
                 >
-                  {rel.title}
-                </Link>
-                <p className="text-xs text-slate-500">{rel.subject}</p>
-              </div>
-            ))}
+                  <div>
+                    <div className="flex items-center justify-between gap-2 mb-2">
+                      <Badge type={rel.resourceType}>{rel.resourceType}</Badge>
+                      {simPercent ? (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-lg bg-purple-50 text-purple-700 border border-purple-200">
+                          <Sparkles className="w-3 h-3" />
+                          {simPercent}% Match
+                        </span>
+                      ) : (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-md bg-slate-100 text-slate-600">
+                          Sem {rel.semester || 1}
+                        </span>
+                      )}
+                    </div>
+                    <Link
+                      to={`/resources/${relId}`}
+                      className="block font-bold text-sm text-slate-900 hover:text-purple-700 mt-1 mb-1 line-clamp-2"
+                    >
+                      {rel.title}
+                    </Link>
+                    <p className="text-xs text-slate-500 line-clamp-1">{rel.subject}</p>
+                    {rel.bestMatchExcerpt && (
+                      <p className="mt-2 text-[11px] text-slate-600 italic line-clamp-2 font-mono bg-slate-50 p-2 rounded-lg border border-slate-200/60">
+                        "{rel.bestMatchExcerpt}"
+                      </p>
+                    )}
+                  </div>
+                  <div className="mt-3 pt-2 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+                    <span className="truncate">{rel.department}</span>
+                    <Link
+                      to={`/resources/${relId}`}
+                      className="font-bold text-purple-700 hover:underline inline-flex items-center gap-1 text-xs"
+                    >
+                      View <ExternalLink className="w-3 h-3" />
+                    </Link>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

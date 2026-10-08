@@ -60,3 +60,17 @@ export const getStatusBadgeColor = (status) => {
       return 'bg-slate-50 text-slate-700 border-slate-300';
   }
 };
+
+export const getIndexingBadgeColor = (indexingStatus) => {
+  switch (indexingStatus) {
+    case 'indexed':
+      return 'bg-purple-50 text-purple-700 border-purple-300 ring-1 ring-purple-600/20';
+    case 'processing':
+      return 'bg-blue-50 text-blue-700 border-blue-300 ring-1 ring-blue-600/20 animate-pulse';
+    case 'failed':
+      return 'bg-rose-50 text-rose-700 border-rose-300 ring-1 ring-rose-600/20';
+    case 'pending':
+    default:
+      return 'bg-slate-50 text-slate-600 border-slate-300';
+  }
+};

@@ -1,5 +1,5 @@
 const mongoose = require('mongoose');
-const { RESOURCE_TYPES, RESOURCE_STATUS } = require('../utils/constants');
+const { RESOURCE_TYPES, RESOURCE_STATUS, INDEXING_STATUS } = require('../utils/constants');
 
 const resourceSchema = new mongoose.Schema(
   {
@@ -69,6 +69,29 @@ const resourceSchema = new mongoose.Schema(
       ],
       default: RESOURCE_STATUS.PENDING,
       index: true,
+    },
+    indexingStatus: {
+      type: String,
+      enum: [
+        INDEXING_STATUS.PENDING,
+        INDEXING_STATUS.PROCESSING,
+        INDEXING_STATUS.INDEXED,
+        INDEXING_STATUS.FAILED,
+      ],
+      default: INDEXING_STATUS.PENDING,
+      index: true,
+    },
+    indexingError: {
+      type: String,
+      default: null,
+    },
+    indexedAt: {
+      type: Date,
+      default: null,
+    },
+    chunkCount: {
+      type: Number,
+      default: 0,
     },
     downloadCount: {
       type: Number,

@@ -96,6 +96,9 @@ class IndexTextResponse(BaseModel):
 
 
 class IndexPDFResponse(BaseModel):
+    success: bool = Field(True, description="Indicates whether indexing succeeded")
+    status: str = Field("indexed", description="Indexing status: 'indexed' or 'failed'")
+    message: str = Field("Document successfully indexed into vector database", description="Status message")
     filename: str = Field(..., description="Source PDF filename")
     resource_id: str = Field(..., description="Resource ID")
     total_pages: int = Field(..., description="Extracted page count")
@@ -107,14 +110,14 @@ class IndexPDFResponse(BaseModel):
 
 class SearchVectorRequest(BaseModel):
     query: str = Field(..., description="Natural language search query (e.g. 'Binary Search Trees', 'Deadlock detection')")
-    top_k: int = Field(5, description="Number of most relevant chunks to retrieve (default: 5)")
+    top_k: int = Field(8, description="Number of most relevant unique resources to retrieve (default: 8)")
     resource_id: Optional[str] = Field(None, description="Optional filter to restrict search to a specific resource")
 
 
 class SearchVectorItem(BaseModel):
     id: str = Field(..., description="Vector ID in ChromaDB")
     text: str = Field(..., description="Chunk text content retrieved")
-    similarity_score: float = Field(..., description="Cosine similarity score (0.0 to 1.0, higher is more similar)")
+    similarity_score: float = Field(..., description="Cosine / hybrid relevance score (0.0 to 1.0, higher is more similar)")
     distance: float = Field(..., description="Cosine distance (0.0 is exact match, 2.0 is opposite)")
     metadata: Dict[str, Any] = Field(..., description="Chunk metadata including resource_id, page_number, filename")
 
@@ -122,8 +125,41 @@ class SearchVectorItem(BaseModel):
 class SearchVectorResponse(BaseModel):
     query: str = Field(..., description="The search query")
     top_k: int = Field(..., description="Requested top_k results count")
-    total_results: int = Field(..., description="Number of matching results found")
-    results: List[SearchVectorItem] = Field(..., description="List of matching chunks sorted by relevance")
+    total_results: int = Field(..., description="Number of matching unique resource results found")
+    results: List[SearchVectorItem] = Field(..., description="List of matching unique resource chunks sorted by relevance")
+
+
+# --- Recommendation Engine Schemas ---
+
+class RecommendRequest(BaseModel):
+    resource_id: Optional[str] = Field(None, description="Source academic resource ID to find similar items for")
+    text: Optional[str] = Field(None, description="Optional text content (title, subject, description) for fallback embedding")
+    top_k: int = Field(5, description="Number of unique similar resources to recommend (default: 5)")
+
+
+class RecommendedResourceItem(BaseModel):
+    resource_id: str = Field(..., description="Unique academic resource ID")
+    similarity_score: float = Field(..., description="Aggregated cosine similarity score (0.0 to 1.0)")
+    final_score: Optional[float] = Field(None, description="Final pooled recommendation score (0.6*max + 0.4*top3_mean)")
+    max_similarity_score: float = Field(..., description="Peak cross-chunk similarity score")
+    max_similarity: Optional[float] = Field(None, description="Peak cross-chunk similarity score alias")
+    avg_similarity_score: float = Field(..., description="Average similarity score across top-3 matched chunks")
+    top3_mean_similarity: Optional[float] = Field(None, description="Mean of top 3 cross-chunk similarities")
+    matched_chunks_count: int = Field(..., description="Number of matching passages in this document")
+    filename: Optional[str] = Field(None, description="Original filename")
+    best_match_page: Optional[int] = Field(None, description="Page number of highest matching chunk")
+    best_match_chunk_id: Optional[str] = Field(None, description="Chunk ID of highest match")
+    best_match_text: Optional[str] = Field(None, description="Excerpt preview of highest matching text")
+    best_source_chunk_id: Optional[str] = Field(None, description="Chunk ID of highest matching source chunk")
+    best_source_page: Optional[int] = Field(None, description="Page number of highest matching source chunk")
+
+
+class RecommendResponse(BaseModel):
+    success: bool = Field(True, description="Indicates whether recommendation succeeded")
+    source_resource_id: Optional[str] = Field(None, description="Source resource ID requested")
+    total_recommendations: int = Field(..., description="Total unique recommended resources returned")
+    recommendations: List[RecommendedResourceItem] = Field(..., description="Ranked list of similar resources")
+    message: str = Field("Recommendations retrieved successfully", description="Status message")
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +324,7 @@ def index_single_text(request: IndexTextRequest):
         )
 
 
+@app.post("/api/ai/index", response_model=IndexPDFResponse)
 @app.post("/api/ai/index-pdf", response_model=IndexPDFResponse)
 async def index_pdf_file(
     file: UploadFile = File(..., description="PDF file to extract, chunk, embed, and store in ChromaDB"),
@@ -302,8 +339,9 @@ async def index_pdf_file(
     Viva Flow:
     1. Validates the PDF format.
     2. Calls indexing_pipeline.index_pdf_document() to execute the 4-step ingestion pipeline.
-    3. Stores 384-D dense vectors with metadata (resource_id, filename, page_number, chunk_id, chunk_index).
-    4. Returns indexing metrics (total pages, total chunks, vectors stored).
+    3. Purges previous vectors for this resource to avoid duplicates.
+    4. Stores 384-D dense vectors with metadata (resource_id, filename, page_number, chunk_id, chunk_index).
+    5. Returns indexing metrics (total pages, total chunks, vectors stored).
     """
     # 1. Validate file extension
     if not file.filename or not file.filename.lower().endswith(".pdf"):
@@ -347,6 +385,9 @@ async def index_pdf_file(
         )
 
         return {
+            "success": True,
+            "status": "indexed",
+            "message": f"Successfully extracted, embedded and indexed {result['vectors_stored']} chunks into ChromaDB",
             "filename": result["filename"],
             "resource_id": result["resource_id"],
             "total_pages": result["total_pages"],
@@ -365,6 +406,29 @@ async def index_pdf_file(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error executing PDF indexing pipeline: {str(e)}"
         )
+
+
+@app.delete("/api/ai/vectors/{resource_id}")
+def delete_resource_vectors(resource_id: str):
+    """
+    Deletes all vector chunks associated with a specific resource_id from ChromaDB.
+    Called when a document is deleted or unapproved.
+    """
+    if not resource_id or not resource_id.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="resource_id is required"
+        )
+    
+    deleted_count = vector_store.delete_by_resource_id(resource_id.strip())
+    stats = vector_store.get_stats()
+    return {
+        "success": True,
+        "message": f"Vectors for resource '{resource_id}' deleted successfully",
+        "resource_id": resource_id,
+        "vectors_deleted": deleted_count,
+        "total_vectors_in_db": stats["total_vectors"]
+    }
 
 
 @app.post("/api/ai/search-vectors", response_model=SearchVectorResponse)
@@ -394,11 +458,12 @@ def search_similar_chunks(request: SearchVectorRequest):
         # Step 1: Embed query text into 384-D space
         query_vector = embedding_service.generate_embedding(request.query)
 
-        # Step 2: Perform similarity search in ChromaDB
+        # Step 2: Perform hybrid similarity search in ChromaDB with grouping, candidate pool expansion, and phrase boost
         matches = vector_store.query_similar_chunks(
             query_embedding=query_vector,
             top_k=request.top_k,
-            resource_id=request.resource_id
+            resource_id=request.resource_id,
+            query_text=request.query
         )
 
         return {
@@ -412,6 +477,85 @@ def search_similar_chunks(request: SearchVectorRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error performing vector similarity search: {str(e)}"
         )
+
+
+@app.post("/api/ai/recommend", response_model=RecommendResponse)
+def get_content_recommendations(request: RecommendRequest):
+    """
+    Content-Based Recommendation Endpoint:
+    Resource ID / Text Representation -> ChromaDB Vector Cosine Matching -> Group by Document -> Top Similar Resources
+    
+    Viva Flow & Logic:
+    1. Input: Accepts a resource_id and/or fallback text representation (title, syllabus, description).
+    2. Vector Representation: Retrieves stored 384-D chunk embeddings for the resource from ChromaDB
+       and computes a normalized centroid vector. If the resource is not yet indexed, embeds the fallback text on-the-fly.
+    3. Similarity Retrieval: Queries ChromaDB for nearest candidate chunks.
+    4. Exclusion: Explicitly filters out chunks belonging to the current resource (avoids recommending itself).
+    5. Deduplication & Grouping: Groups multiple matching chunks by resource_id so that each PDF appears only once.
+    6. Score Aggregation: Computes weighted similarity (70% peak chunk alignment + 30% document average).
+    7. Ranking: Returns top-K distinct academic resources ranked by semantic relevance.
+    """
+    if not request.resource_id and (not request.text or not request.text.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Either resource_id or text must be provided for recommendations."
+        )
+
+    if request.top_k <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="top_k must be greater than 0."
+        )
+
+    try:
+        source_embedding = None
+        
+        # If resource_id is provided, attempt to compute centroid from ChromaDB vectors
+        if request.resource_id:
+            source_embedding = vector_store.compute_resource_centroid(request.resource_id.strip())
+
+        # If resource has no stored vectors in ChromaDB, fallback to embedding provided text on-the-fly
+        if source_embedding is None and request.text and request.text.strip():
+            source_embedding = embedding_service.generate_embedding(request.text.strip())
+
+        if source_embedding is None:
+            return {
+                "success": True,
+                "source_resource_id": request.resource_id,
+                "total_recommendations": 0,
+                "recommendations": [],
+                "message": "Resource has no indexed vectors in ChromaDB and no fallback text was provided."
+            }
+
+        recommendations = vector_store.recommend_similar_resources(
+            resource_id=request.resource_id.strip() if request.resource_id else None,
+            source_embedding=source_embedding,
+            top_k=request.top_k
+        )
+
+        return {
+            "success": True,
+            "source_resource_id": request.resource_id,
+            "total_recommendations": len(recommendations),
+            "recommendations": recommendations,
+            "message": f"Successfully retrieved {len(recommendations)} similar resource recommendations."
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error computing content-based recommendations: {str(e)}"
+        )
+
+
+@app.get("/api/ai/recommend", response_model=RecommendResponse)
+def get_content_recommendations_get(
+    resource_id: Optional[str] = None,
+    text: Optional[str] = None,
+    top_k: int = 5
+):
+    """GET variant of the recommendation endpoint for quick URL testing & browser queries."""
+    req = RecommendRequest(resource_id=resource_id, text=text, top_k=top_k)
+    return get_content_recommendations(req)
 
 
 @app.get("/api/ai/vector-stats")

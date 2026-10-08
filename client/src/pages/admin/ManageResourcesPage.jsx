@@ -10,6 +10,8 @@ import {
   CheckCircle,
   XCircle,
   Clock,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 import { resourceService } from '../../services/resourceService';
 import Badge from '../../components/common/Badge';
@@ -55,7 +57,10 @@ const ManageResourcesPage = () => {
       if (res.success) {
         setToast({
           type: 'success',
-          message: `Resource status updated to '${newStatus}'`,
+          message:
+            newStatus === 'approved'
+              ? `Resource approved and AI indexing started!`
+              : `Resource status updated to '${newStatus}'`,
         });
         fetchResources();
       }
@@ -63,6 +68,24 @@ const ManageResourcesPage = () => {
       setToast({
         type: 'error',
         message: err.message || 'Failed to update resource status',
+      });
+    }
+  };
+
+  const handleReindex = async (id) => {
+    try {
+      const res = await resourceService.adminReindexResource(id);
+      if (res.success) {
+        setToast({
+          type: 'success',
+          message: 'AI vector indexing pipeline triggered!',
+        });
+        setTimeout(() => fetchResources(), 1500);
+      }
+    } catch (err) {
+      setToast({
+        type: 'error',
+        message: err.message || 'Failed to trigger AI re-indexing',
       });
     }
   };
@@ -196,8 +219,36 @@ const ManageResourcesPage = () => {
                       </div>
                     </td>
 
-                    <td className="px-4 py-4">
-                      <Badge status={res.status}>{res.status}</Badge>
+                    <td className="px-4 py-4 space-y-1">
+                      <div>
+                        <Badge status={res.status}>{res.status}</Badge>
+                      </div>
+                      {res.status === 'approved' && (
+                        <div className="flex items-center gap-1">
+                          {res.indexingStatus === 'indexed' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200">
+                              <Sparkles className="w-2.5 h-2.5 mr-1" />
+                              Indexed ({res.chunkCount || 0} chunks)
+                            </span>
+                          ) : res.indexingStatus === 'processing' ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700 border border-blue-200 animate-pulse">
+                              <RefreshCw className="w-2.5 h-2.5 mr-1 animate-spin" />
+                              Indexing...
+                            </span>
+                          ) : res.indexingStatus === 'failed' ? (
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 cursor-help"
+                              title={res.indexingError || 'Indexing failed'}
+                            >
+                              Index Failed
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                              Not Indexed
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
 
                     <td className="px-4 py-4 text-slate-500 whitespace-nowrap">
@@ -209,6 +260,7 @@ const ManageResourcesPage = () => {
                         <button
                           onClick={() => handleStatusUpdate(res._id, 'approved')}
                           className="px-2 py-1 rounded bg-emerald-100 text-emerald-800 hover:bg-emerald-200 text-[11px] font-semibold"
+                          title="Approve resource & automatically index into AI semantic search"
                         >
                           Approve
                         </button>
@@ -227,6 +279,16 @@ const ManageResourcesPage = () => {
                           className="px-2 py-1 rounded bg-amber-100 text-amber-800 hover:bg-amber-200 text-[11px] font-semibold"
                         >
                           Set Pending
+                        </button>
+                      )}
+                      {res.status === 'approved' && (
+                        <button
+                          onClick={() => handleReindex(res._id)}
+                          className="px-2 py-1 rounded bg-purple-100 text-purple-800 hover:bg-purple-200 text-[11px] font-semibold inline-flex items-center gap-1"
+                          title="Re-run AI vector indexing pipeline for this PDF"
+                        >
+                          <RefreshCw className="w-3 h-3" />
+                          Re-index
                         </button>
                       )}
                       <button

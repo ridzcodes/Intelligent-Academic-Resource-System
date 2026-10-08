@@ -20,6 +20,13 @@ const RESOURCE_STATUS = {
   REJECTED: 'rejected',
 };
 
+const INDEXING_STATUS = {
+  PENDING: 'pending',
+  PROCESSING: 'processing',
+  INDEXED: 'indexed',
+  FAILED: 'failed',
+};
+
 const USER_ROLES = {
   STUDENT: 'student',
   ADMIN: 'admin',
@@ -41,6 +48,7 @@ const SEMESTERS = [1, 2, 3, 4, 5, 6, 7, 8];
 module.exports = {
   RESOURCE_TYPES,
   RESOURCE_STATUS,
+  INDEXING_STATUS,
   USER_ROLES,
   DEPARTMENTS,
   SEMESTERS,

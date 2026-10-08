@@ -1,7 +1,8 @@
 const path = require('path');
 const fs = require('fs');
 const Resource = require('../models/Resource');
-const { RESOURCE_STATUS, USER_ROLES } = require('../utils/constants');
+const { RESOURCE_STATUS, USER_ROLES, INDEXING_STATUS } = require('../utils/constants');
+const { indexDocument, deleteIndexedVectors } = require('../utils/aiClient');
 
 /**
  * @desc    Get all resources (approved only for general public/students)
@@ -321,6 +322,11 @@ const deleteResource = async (req, res, next) => {
       }
     }
 
+    // Clean up ChromaDB vector embeddings asynchronously
+    deleteIndexedVectors(resource._id.toString()).catch((err) => {
+      console.warn(`[AI Cleanup Warning] Failed to delete vectors for resource ${resource._id}:`, err.message);
+    });
+
     await resource.deleteOne();
 
     res.status(200).json({
@@ -369,7 +375,75 @@ const downloadResource = async (req, res, next) => {
 };
 
 /**
+ * Helper: Automatically extracts, chunks, embeds, and indexes an approved PDF into ChromaDB
+ * Safely updates MongoDB Resource indexingStatus without throwing or crashing Express.
+ * 
+ * @param {string|mongoose.Types.ObjectId} resourceId
+ */
+const triggerAutoIndexing = async (resourceId) => {
+  try {
+    const resource = await Resource.findById(resourceId);
+    if (!resource) {
+      console.warn(`[AI Auto-Indexing] Resource ${resourceId} not found in database.`);
+      return;
+    }
+
+    if (resource.status !== RESOURCE_STATUS.APPROVED) {
+      console.log(`[AI Auto-Indexing] Skipping resource ${resourceId} because status is '${resource.status}' (not approved).`);
+      return;
+    }
+
+    const filename = path.basename(resource.fileUrl);
+    const filePath = path.join(__dirname, '../../uploads', filename);
+
+    if (!fs.existsSync(filePath)) {
+      console.error(`[AI Auto-Indexing Error] Physical file not found: ${filePath}`);
+      resource.indexingStatus = INDEXING_STATUS.FAILED;
+      resource.indexingError = 'Physical PDF file not found on server storage';
+      await resource.save();
+      return;
+    }
+
+    // Mark as processing
+    resource.indexingStatus = INDEXING_STATUS.PROCESSING;
+    resource.indexingError = null;
+    await resource.save();
+
+    console.log(`[AI Auto-Indexing] Starting pipeline for: "${resource.title}" (${resource._id})...`);
+
+    // Call Python FastAPI microservice (POST /api/ai/index)
+    const result = await indexDocument({
+      resourceId: resource._id.toString(),
+      filePath,
+      filename: resource.fileOriginalName || filename,
+    });
+
+    console.log(
+      `[AI Auto-Indexing Success] Resource "${resource.title}" (${resource._id}) -> ${result.vectors_stored || result.total_chunks} vectors stored in ChromaDB.`
+    );
+
+    // Update resource with successful indexing state
+    resource.indexingStatus = INDEXING_STATUS.INDEXED;
+    resource.indexedAt = new Date();
+    resource.chunkCount = result.vectors_stored || result.total_chunks || 0;
+    resource.indexingError = null;
+    await resource.save();
+  } catch (error) {
+    console.error(`[AI Auto-Indexing Error] Failed to index resource ${resourceId}:`, error.message);
+    try {
+      await Resource.findByIdAndUpdate(resourceId, {
+        indexingStatus: INDEXING_STATUS.FAILED,
+        indexingError: error.message || 'AI Microservice indexing failed',
+      });
+    } catch (dbErr) {
+      console.error('[AI Auto-Indexing DB Update Error]:', dbErr.message);
+    }
+  }
+};
+
+/**
  * @desc    Admin: Update resource approval status (approved / rejected / pending)
+ *          Automatically triggers AI vector indexing immediately upon approval.
  * @route   PATCH /api/resources/:id/status
  * @access  Private (Admin only)
  */
@@ -399,11 +473,65 @@ const updateResourceStatus = async (req, res, next) => {
     }
 
     resource.status = status;
-    await resource.save();
+
+    if (status === RESOURCE_STATUS.APPROVED) {
+      resource.indexingStatus = INDEXING_STATUS.PROCESSING;
+      await resource.save();
+
+      // Trigger automatic AI indexing immediately in the background
+      triggerAutoIndexing(resource._id);
+    } else {
+      // If rejected or set back to pending, reset indexing status & clean up vectors
+      resource.indexingStatus = INDEXING_STATUS.PENDING;
+      resource.indexingError = null;
+      await resource.save();
+
+      deleteIndexedVectors(resource._id.toString()).catch((err) => {
+        console.warn(`[AI Cleanup Warning] Failed removing vectors for unapproved resource ${resource._id}:`, err.message);
+      });
+    }
 
     res.status(200).json({
       success: true,
-      message: `Resource status updated to '${status}' successfully`,
+      message:
+        status === RESOURCE_STATUS.APPROVED
+          ? `Resource approved and automatic AI indexing started.`
+          : `Resource status updated to '${status}' successfully.`,
+      resource,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * @desc    Admin: Manually re-trigger AI indexing for an approved resource
+ * @route   POST /api/resources/:id/reindex
+ * @access  Private (Admin only)
+ */
+const reindexResource = async (req, res, next) => {
+  try {
+    const resource = await Resource.findById(req.params.id);
+    if (!resource) {
+      return res.status(404).json({
+        success: false,
+        message: 'Resource not found',
+      });
+    }
+
+    if (resource.status !== RESOURCE_STATUS.APPROVED) {
+      return res.status(400).json({
+        success: false,
+        message: 'Only approved resources can be indexed into the AI vector database',
+      });
+    }
+
+    // Trigger indexing immediately
+    triggerAutoIndexing(resource._id);
+
+    res.status(200).json({
+      success: true,
+      message: 'AI vector indexing triggered successfully',
       resource,
     });
   } catch (error) {
@@ -420,4 +548,6 @@ module.exports = {
   deleteResource,
   downloadResource,
   updateResourceStatus,
+  reindexResource,
+  triggerAutoIndexing,
 };

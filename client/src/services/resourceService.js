@@ -14,12 +14,26 @@ export const resourceService = {
   /**
    * Execute AI-Powered Semantic Vector Search via SentenceTransformers & ChromaDB
    * @param {string} query - Natural language search prompt
-   * @param {number} topK - Number of results to retrieve (default: 6)
+   * @param {number} topK - Number of results to retrieve (default: 8)
    */
-  async semanticSearch(query, topK = 6) {
+  async semanticSearch(query, topK = 8) {
     const response = await api.post('/ai/semantic-search', {
       query,
       top_k: topK,
+    });
+    return response.data;
+  },
+
+  /**
+   * Get AI Content-Based Recommendations for an academic resource
+   * @param {string|null} resourceId - Source resource ID
+   * @param {Object} [params] - Optional { topK, text }
+   */
+  async getRecommendations(resourceId = null, params = {}) {
+    const response = await api.post('/ai/recommend', {
+      resource_id: resourceId,
+      top_k: params.topK || 6,
+      text: params.text,
     });
     return response.data;
   },
@@ -104,6 +118,14 @@ export const resourceService = {
    */
   async adminUpdateStatus(id, status) {
     const response = await api.patch(`/resources/${id}/status`, { status });
+    return response.data;
+  },
+
+  /**
+   * Admin: Manually trigger AI vector re-indexing for an approved resource
+   */
+  async adminReindexResource(id) {
+    const response = await api.post(`/resources/${id}/reindex`);
     return response.data;
   },
 

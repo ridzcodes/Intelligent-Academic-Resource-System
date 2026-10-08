@@ -46,3 +46,4 @@ ENV/
 ai-service/chroma_db/
 chroma_db/
 *.sqlite3
+ai-service/chroma_test_db/

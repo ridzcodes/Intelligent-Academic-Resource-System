@@ -78,7 +78,8 @@ def test_indexing_pipeline_direct():
     print("STARTING TEST SUITE: Complete Document Indexing Pipeline")
     print("=" * 80)
 
-    # Reset ChromaDB collection for clean test
+    # Use isolated test database (chroma_test_db) to avoid modifying live database
+    vector_store.switch_to_test_db()
     vector_store.reset()
 
     test_pdf_path = Path("sample_dbms_lecture.pdf")
